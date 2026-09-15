@@ -66,19 +66,19 @@ export default function Collection({ user }) {
 
       <section className="app-hero">
         <div>
-          <p className="eyebrow">BỘ SƯU TẬP</p>
+          <p className="eyebrow">Bộ sưu tập</p>
           <h1>Chọn sticker mang dấu ấn của bạn</h1>
           <p>Tải ảnh khuôn mặt rõ, chọn phong cách và thêm trang phục nếu muốn.</p>
         </div>
         <div className="mini-sheet">
-          ✨
-          <br />
           😊 💬
+          <br />
+          ✨ 🎨
         </div>
       </section>
 
       <section className="content">
-        <h2>Danh mục Stickers</h2>
+        <h2>Danh mục stickers</h2>
         {loading && <p>Đang tải bộ sticker...</p>}
         {error && <p className="error">{error}</p>}
 
@@ -87,10 +87,10 @@ export default function Collection({ user }) {
             {cards.map((card) => (
               <article className={`sticker-card ${card.color}`} key={card.id}>
                 <div className="card-art">{CARD_EMOJI[card.color] || "🎨"}</div>
-                <p>{card.topic}</p>
+                <p className="card-topic">{card.topic}</p>
                 <h3>{card.title}</h3>
-                <h4>{card.alias}</h4>
-                <p>{card.description}</p>
+                <p className="card-alias">{card.alias}</p>
+                <p className="card-desc">{card.description}</p>
                 <button
                   className="primary"
                   type="button"
@@ -117,7 +117,7 @@ export default function Collection({ user }) {
             </button>
             <p className="eyebrow">{selected.topic}</p>
             <h2>{selected.title}</h2>
-            <p>{selected.description}</p>
+            <p className="hint">{selected.description}</p>
 
             <label>
               Ảnh của bạn
@@ -130,7 +130,9 @@ export default function Collection({ user }) {
             </label>
 
             <label>
-              Trang phục <small>(tuỳ chọn)</small>
+              <span>
+                Trang phục <small>(tuỳ chọn)</small>
+              </span>
               <input
                 maxLength={160}
                 value={outfit}
@@ -142,7 +144,7 @@ export default function Collection({ user }) {
             {message && <p className="error">{message}</p>}
 
             <button className="primary" disabled={creating}>
-              {creating ? "ĐANG TẠO..." : "Tạo sticker"}
+              {creating ? "Đang tạo..." : "Tạo sticker"}
             </button>
           </form>
         </div>

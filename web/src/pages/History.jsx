@@ -41,9 +41,9 @@ export default function History({ user }) {
     <main className="app-page">
       <Header user={user} />
       <section className="content">
-        <p className="eyebrow">LỊCH SỬ</p>
+        <p className="eyebrow">Lịch sử</p>
         <h1>Lịch sử stickers</h1>
-        <p>Các bộ sticker bạn đã tạo bằng ảnh của mình.</p>
+        <p className="section-lead">Các bộ sticker bạn đã tạo bằng ảnh của mình.</p>
 
         {loading && <p>Đang tải lịch sử...</p>}
         {error && <p className="error">{error}</p>}
@@ -62,18 +62,20 @@ export default function History({ user }) {
                   <img src={sticker.image} alt={sticker.title} />
                 ) : (
                   <div className="history-placeholder">
-                    {sticker.status === "processing" ? "ĐANG TẠO..." : "CÓ LỖI"}
+                    {sticker.status === "processing" ? "Đang tạo..." : "Có lỗi"}
                   </div>
                 )}
                 <h3>{sticker.title}</h3>
                 <p className={`status ${sticker.status}`}>
                   {sticker.status === "completed"
-                    ? "ĐÃ TẠO"
+                    ? "Đã tạo"
                     : sticker.status === "processing"
-                      ? "ĐANG XỬ LÝ"
-                      : "CÓ LỖI"}
+                      ? "Đang xử lý"
+                      : "Có lỗi"}
                 </p>
-                {sticker.outfit && <p>Trang phục: {sticker.outfit}</p>}
+                {sticker.outfit && (
+                  <p className="history-meta">Trang phục: {sticker.outfit}</p>
+                )}
                 {sticker.errorMessage && (
                   <p className="error small-error">{sticker.errorMessage}</p>
                 )}

@@ -58,10 +58,10 @@ export default function Admin({ user }) {
     <main className="app-page">
       <Header user={user} />
       <section className="content">
-        <p className="eyebrow">ADMIN</p>
+        <p className="eyebrow">Admin</p>
         <h1>Quản trị StickAI</h1>
-        <p className="hint">
-          Trang này chỉ xem users và sửa nội dung bộ sticker (title / mô tả / prompt).
+        <p className="section-lead">
+          Xem danh sách người dùng và sửa nội dung bộ sticker (tên, mô tả, prompt).
         </p>
 
         {error && <p className="error">{error}</p>}
@@ -102,7 +102,7 @@ export default function Admin({ user }) {
                   </div>
                   <button
                     type="button"
-                    className="primary"
+                    className="ghost-btn"
                     onClick={() => {
                       setEditing({ ...card });
                       setSaveMessage("");
@@ -122,10 +122,10 @@ export default function Admin({ user }) {
               <button className="close" type="button" onClick={() => setEditing(null)}>
                 ×
               </button>
-              <p className="eyebrow">SỬA CARD</p>
-              <h2>{editing.id}</h2>
+              <p className="eyebrow">Sửa bộ sticker</p>
+              <h2>{editing.title}</h2>
               <label>
-                Title
+                Tên bộ sticker
                 <input
                   value={editing.title}
                   onChange={(event) => setEditing({ ...editing, title: event.target.value })}
