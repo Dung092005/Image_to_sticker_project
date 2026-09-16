@@ -1,25 +1,25 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
 import Header from "../components/Header.jsx";
-import { api, apiRaw } from "../api.js";
+import { api } from "../api.js";
 
-const CARD_EMOJI = {
-  orange: "🏖️",
-  pink: "💕",
-  blue: "📚",
-};
+const APP_HERO_SLIDES = [
+  { image: "/hero-slide.png", alt: "Bộ sticker StickAI với nhân vật áo vàng" },
+  { image: "/hero.png", alt: "Bộ sticker mẫu của StickAI" },
+];
 
 export default function Collection({ user }) {
-  const navigate = useNavigate();
+  const [activeHeroSlide, setActiveHeroSlide] = useState(0);
   const [cards, setCards] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const [selected, setSelected] = useState(null);
-  const [file, setFile] = useState(null);
-  const [outfit, setOutfit] = useState("");
-  const [creating, setCreating] = useState(false);
-  const [message, setMessage] = useState("");
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setActiveHeroSlide((current) => (current + 1) % APP_HERO_SLIDES.length);
+    }, 6000);
+
+    return () => window.clearInterval(timer);
+  }, []);
 
   useEffect(() => {
     api("/api/cards")
@@ -28,52 +28,56 @@ export default function Collection({ user }) {
       .finally(() => setLoading(false));
   }, []);
 
-  async function generate(event) {
-    event.preventDefault();
-    if (!file) {
-      setMessage("Vui lòng chọn ảnh trước khi tạo.");
-      return;
-    }
-
-    setCreating(true);
-    setMessage("");
-
-    const formData = new FormData();
-    formData.append("cardId", selected.id);
-    formData.append("image", file);
-    formData.append("outfit", outfit);
-
-    try {
-      const { response, data } = await apiRaw("/api/generate", {
-        method: "POST",
-        body: formData,
-      });
-      if (!response.ok) {
-        throw new Error(data.message || "Không thể tạo sticker.");
-      }
-      // 202 Accepted: job is queued. History page will poll until done.
-      navigate("/history");
-    } catch (reason) {
-      setMessage(reason.message || "Không thể tạo sticker.");
-    } finally {
-      setCreating(false);
-    }
-  }
-
   return (
     <main className="app-page">
-      <Header user={user} />
+      <Header user={user} transparent />
 
-      <section className="app-hero">
-        <div>
-          <p className="eyebrow">Bộ sưu tập</p>
-          <h1>Chọn sticker mang dấu ấn của bạn</h1>
-          <p>Tải ảnh khuôn mặt rõ, chọn phong cách và thêm trang phục nếu muốn.</p>
+      <section className="app-hero-slider">
+        {APP_HERO_SLIDES.map((slide, index) => (
+          <img
+            className={`app-hero-image ${index === activeHeroSlide ? "active" : ""}`}
+            src={slide.image}
+            alt={slide.alt}
+            aria-hidden={index !== activeHeroSlide}
+            key={slide.image}
+          />
+        ))}
+        <div className="app-hero-copy">
+          <p className="eyebrow">Stickers riêng của bạn</p>
+          <h1>Một tấm ảnh, cả bộ sticker.</h1>
+          <p>Khám phá các bộ sticker theo phong cách của riêng bạn.</p>
         </div>
-        <div className="mini-sheet">
-          😊 💬
-          <br />
-          ✨ 🎨
+        <div className="app-hero-controls">
+          <button
+            type="button"
+            aria-label="Slide trước"
+            onClick={() =>
+              setActiveHeroSlide(
+                (current) => (current - 1 + APP_HERO_SLIDES.length) % APP_HERO_SLIDES.length,
+              )
+            }
+          >
+            ‹
+          </button>
+          <div className="app-hero-dots">
+            {APP_HERO_SLIDES.map((slide, index) => (
+              <button
+                className={index === activeHeroSlide ? "active" : ""}
+                type="button"
+                aria-label={`Chuyển đến slide ${index + 1}`}
+                aria-current={index === activeHeroSlide ? "true" : undefined}
+                onClick={() => setActiveHeroSlide(index)}
+                key={slide.image}
+              />
+            ))}
+          </div>
+          <button
+            type="button"
+            aria-label="Slide tiếp theo"
+            onClick={() => setActiveHeroSlide((current) => (current + 1) % APP_HERO_SLIDES.length)}
+          >
+            ›
+          </button>
         </div>
       </section>
 
@@ -86,69 +90,25 @@ export default function Collection({ user }) {
           <div className="card-grid">
             {cards.map((card) => (
               <article className={`sticker-card ${card.color}`} key={card.id}>
-                <div className="card-art">{CARD_EMOJI[card.color] || "🎨"}</div>
-                <p className="card-topic">{card.topic}</p>
-                <h3>{card.title}</h3>
-                <p className="card-alias">{card.alias}</p>
-                <p className="card-desc">{card.description}</p>
-                <button
-                  className="primary"
-                  type="button"
-                  onClick={() => {
-                    setSelected(card);
-                    setFile(null);
-                    setOutfit("");
-                    setMessage("");
-                  }}
-                >
-                  Tạo bộ sticker
-                </button>
+                <div className="card-art">
+                  {(card.image || card.imageUrl || card.image_url) && (
+                    <img
+                      src={card.image || card.imageUrl || card.image_url}
+                      alt={card.title}
+                    />
+                  )}
+                  <p className="card-topic">{card.topic}</p>
+                  <div className="card-info">
+                    <h3>{card.title}</h3>
+                    <p className="card-alias">{card.alias}</p>
+                  </div>
+                </div>
               </article>
             ))}
           </div>
         )}
       </section>
 
-      {selected && (
-        <div className="backdrop">
-          <form className="create-card" onSubmit={generate}>
-            <button className="close" type="button" onClick={() => setSelected(null)}>
-              ×
-            </button>
-            <p className="eyebrow">{selected.topic}</p>
-            <h2>{selected.title}</h2>
-            <p className="hint">{selected.description}</p>
-
-            <label>
-              Ảnh của bạn
-              <input
-                required
-                type="file"
-                accept="image/png,image/jpeg,image/webp"
-                onChange={(event) => setFile(event.target.files?.[0] || null)}
-              />
-            </label>
-
-            <label>
-              <span>
-                Trang phục <small>(tuỳ chọn)</small>
-              </span>
-              <input
-                maxLength={160}
-                value={outfit}
-                placeholder="Ví dụ: áo sơ mi trắng"
-                onChange={(event) => setOutfit(event.target.value)}
-              />
-            </label>
-
-            {message && <p className="error">{message}</p>}
-
-            <button className="primary" disabled={creating}>
-              {creating ? "Đang tạo..." : "Tạo sticker"}
-            </button>
-          </form>
-        </div>
-      )}
     </main>
   );
 }
