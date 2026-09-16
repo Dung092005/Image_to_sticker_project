@@ -1,25 +1,31 @@
 import { createServer } from "node:http";
-import { randomUUID } from "node:crypto";
 import { readFile, writeFile, mkdir, unlink } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  ensureSchema,
+  loginWithPassword,
+  createSession,
+  getUserBySession,
+  deleteSession,
+  listCards,
+  getCard,
+  updateCard,
+  listUsers,
+  listHistoryForUser,
+  getGeneratedForUser,
+  createGeneratedJob,
+  updateGeneratedJob,
+  pingDatabase,
+  SESSION_MAX_AGE_SECONDS,
+} from "./db.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const dataFolder = path.join(here, "..", "data");
 const projectFolder = path.join(here, "..");
 const uploadsFolder = path.join(here, "uploads");
 const generatedFolder = path.join(here, "generated");
-const sessionsFile = path.join(dataFolder, "sessions.json");
-
-// Serialize JSON writes so generate + history updates do not clobber each other.
-let dataQueue = Promise.resolve();
-function withLock(task) {
-  const run = dataQueue.then(task, task);
-  dataQueue = run.catch(() => undefined);
-  return run;
-}
 
 async function loadEnvFiles() {
   for (const name of [".env.local", ".env"]) {
@@ -38,29 +44,62 @@ async function loadEnvFiles() {
   }
 }
 
-function send(res, status, body, extraHeaders = {}) {
+function writeGcpCredentialsFromEnv() {
+  const json = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON?.trim();
+  if (!json) return;
+  const credPath = path.join(here, "gcp-service-account.json");
+  writeFileSync(credPath, json, "utf8");
+  process.env.GOOGLE_APPLICATION_CREDENTIALS = credPath;
+}
+
+function allowedOrigins() {
+  return (process.env.APP_ORIGIN || "http://localhost:5173")
+    .split(",")
+    .map((value) => value.trim().replace(/\/$/, ""))
+    .filter(Boolean);
+}
+
+function corsHeaders(req) {
+  const origin = req.headers.origin || "";
+  const allowed = allowedOrigins();
+  const headers = {
+    "Access-Control-Allow-Methods": "GET,POST,PUT,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Credentials": "true",
+    Vary: "Origin",
+  };
+  if (origin && allowed.includes(origin)) {
+    headers["Access-Control-Allow-Origin"] = origin;
+  } else if (allowed.length === 1 && !req.headers.origin) {
+    // Same-origin proxy (Vercel rewrite) often has no browser Origin on some requests.
+  }
+  return headers;
+}
+
+function sessionCookie(value, maxAge = SESSION_MAX_AGE_SECONDS) {
+  const secure =
+    process.env.COOKIE_SECURE === "true" ||
+    process.env.NODE_ENV === "production";
+  // Default Lax = Vercel rewrite cùng site FE. Đặt COOKIE_SAMESITE=None nếu FE gọi thẳng Render.
+  const sameSite = process.env.COOKIE_SAMESITE || "Lax";
+  const parts = [
+    `stickai_session=${value}`,
+    "HttpOnly",
+    `SameSite=${sameSite}`,
+    "Path=/",
+    `Max-Age=${maxAge}`,
+  ];
+  if (secure) parts.push("Secure");
+  return parts.join("; ");
+}
+
+function send(res, status, body, extraHeaders = {}, req = null) {
   res.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
+    ...(req ? corsHeaders(req) : {}),
     ...extraHeaders,
   });
   res.end(JSON.stringify(body));
-}
-
-async function readJson(name) {
-  return JSON.parse(await readFile(path.join(dataFolder, name), "utf8"));
-}
-
-async function writeJson(name, value) {
-  await writeFile(path.join(dataFolder, name), JSON.stringify(value, null, 2), "utf8");
-}
-
-async function readSessions() {
-  if (!existsSync(sessionsFile)) return {};
-  return JSON.parse(await readFile(sessionsFile, "utf8"));
-}
-
-async function writeSessions(sessions) {
-  await writeFile(sessionsFile, JSON.stringify(sessions, null, 2), "utf8");
 }
 
 async function readBody(req) {
@@ -144,16 +183,6 @@ function runPython(args) {
   });
 }
 
-async function updateHistoryItem(jobId, patch) {
-  return withLock(async () => {
-    const history = await readJson("history.json");
-    const item = history.find((sticker) => sticker.id === jobId);
-    if (!item) return;
-    Object.assign(item, patch);
-    await writeJson("history.json", history);
-  });
-}
-
 async function generateSticker(job, card, outfit, image, mimeType) {
   const inputPath = path.join(uploadsFolder, `${job.id}.input`);
   const outputPath = path.join(generatedFolder, `${job.id}.png`);
@@ -173,7 +202,7 @@ async function generateSticker(job, card, outfit, image, mimeType) {
       "--output",
       outputPath,
     ]);
-    await updateHistoryItem(job.id, {
+    await updateGeneratedJob(job.id, {
       status: "completed",
       image: `/api/generated/${job.id}`,
       errorMessage: null,
@@ -181,7 +210,7 @@ async function generateSticker(job, card, outfit, image, mimeType) {
   } catch (error) {
     const detail = String(error.message || error).slice(0, 500);
     const missingProject = !process.env.GCP_PROJECT_ID;
-    await updateHistoryItem(job.id, {
+    await updateGeneratedJob(job.id, {
       status: "error",
       errorMessage: missingProject
         ? "Thiếu GCP_PROJECT_ID trong .env.local. Xem README để cấu hình Vertex AI."
@@ -203,217 +232,163 @@ function cookies(req) {
 }
 
 async function currentUser(req) {
-  const sessionId = cookies(req).stickai_session;
-  if (!sessionId) return null;
-  const sessions = await readSessions();
-  const userId = sessions[sessionId];
-  if (!userId) return null;
-  const users = await readJson("users.json");
-  return users.find((user) => user.id === userId) || null;
-}
-
-function publicUser(user) {
-  const { password, ...safeUser } = user;
-  return safeUser;
+  return getUserBySession(cookies(req).stickai_session);
 }
 
 const port = Number(process.env.PORT || 3000);
 
 await loadEnvFiles();
+writeGcpCredentialsFromEnv();
+await ensureSchema();
+await pingDatabase();
 
 createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost:3000");
   console.log(req.method, url.pathname);
 
+  if (req.method === "OPTIONS") {
+    res.writeHead(204, corsHeaders(req));
+    return res.end();
+  }
+
   try {
+    if (req.method === "GET" && url.pathname === "/api/health") {
+      return send(res, 200, { ok: true, database: "supabase" }, {}, req);
+    }
+
     if (req.method === "GET" && url.pathname === "/api/cards") {
-      return send(res, 200, { cards: await readJson("cards.json") });
+      return send(res, 200, { cards: await listCards() }, {}, req);
     }
 
     if (req.method === "GET" && url.pathname === "/api/auth/me") {
       const user = await currentUser(req);
       return user
-        ? send(res, 200, { user: publicUser(user) })
-        : send(res, 401, { message: "Bạn chưa đăng nhập." });
+        ? send(res, 200, { user }, {}, req)
+        : send(res, 401, { message: "Bạn chưa đăng nhập." }, {}, req);
     }
 
     if (req.method === "POST" && url.pathname === "/api/auth/login") {
       const body = await readBody(req);
-      if (!body) return send(res, 400, { message: "Body JSON không hợp lệ." });
-      const users = await readJson("users.json");
-      const user = users.find(
-        (item) =>
-          item.email === String(body.email || "").trim().toLowerCase() &&
-          item.password === body.password
-      );
-      if (!user) return send(res, 401, { message: "Email hoặc mật khẩu không đúng." });
+      if (!body) return send(res, 400, { message: "Body JSON không hợp lệ." }, {}, req);
+      const user = await loginWithPassword(body.email, body.password);
+      if (!user) return send(res, 401, { message: "Email hoặc mật khẩu không đúng." }, {}, req);
 
-      const sessionId = randomUUID();
-      await withLock(async () => {
-        const sessions = await readSessions();
-        sessions[sessionId] = user.id;
-        await writeSessions(sessions);
-      });
-
-      // Cookie only stores a random session id. The server maps it to a user.
+      const sessionId = await createSession(user.id);
       return send(
         res,
         200,
-        { user: publicUser(user) },
-        {
-          "Set-Cookie": `stickai_session=${sessionId}; HttpOnly; SameSite=Lax; Path=/; Max-Age=604800`,
-        }
+        { user },
+        { "Set-Cookie": sessionCookie(sessionId) },
+        req
       );
     }
 
     if (req.method === "POST" && url.pathname === "/api/auth/logout") {
       const sessionId = cookies(req).stickai_session;
-      if (sessionId) {
-        await withLock(async () => {
-          const sessions = await readSessions();
-          delete sessions[sessionId];
-          await writeSessions(sessions);
-        });
-      }
+      if (sessionId) await deleteSession(sessionId);
       return send(
         res,
         200,
         { ok: true },
-        {
-          "Set-Cookie": "stickai_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0",
-        }
+        { "Set-Cookie": sessionCookie("", 0) },
+        req
       );
     }
 
     if (req.method === "GET" && url.pathname === "/api/history") {
       const user = await currentUser(req);
-      if (!user) return send(res, 401, { message: "Vui lòng đăng nhập." });
-      const history = await readJson("history.json");
-      return send(res, 200, {
-        stickers: history.filter((sticker) => sticker.userId === user.id).reverse(),
-      });
+      if (!user) return send(res, 401, { message: "Vui lòng đăng nhập." }, {}, req);
+      return send(res, 200, { stickers: await listHistoryForUser(user.id) }, {}, req);
     }
 
     if (req.method === "GET" && url.pathname.startsWith("/api/generated/")) {
       const user = await currentUser(req);
       const id = url.pathname.split("/").pop();
-      const history = await readJson("history.json");
-      const sticker = history.find(
-        (item) => item.id === id && item.userId === user?.id && item.status === "completed"
-      );
+      const sticker = user ? await getGeneratedForUser(user.id, id) : null;
       const imagePath = path.join(generatedFolder, `${id}.png`);
-      if (!sticker || !existsSync(imagePath)) {
-        return send(res, 404, { message: "Không tìm thấy sticker." });
+      if (!sticker || sticker.status !== "completed" || !existsSync(imagePath)) {
+        return send(res, 404, { message: "Không tìm thấy sticker." }, {}, req);
       }
       const image = await readFile(imagePath);
       res.writeHead(200, {
         "Content-Type": "image/png",
         "Cache-Control": "private, max-age=3600",
         "X-Content-Type-Options": "nosniff",
+        ...corsHeaders(req),
       });
       return res.end(image);
     }
 
     if (req.method === "POST" && url.pathname === "/api/generate") {
       const user = await currentUser(req);
-      if (!user) return send(res, 401, { message: "Vui lòng đăng nhập để tạo sticker." });
+      if (!user) return send(res, 401, { message: "Vui lòng đăng nhập để tạo sticker." }, {}, req);
 
       const body = parseMultipart(await readBuffer(req), req.headers["content-type"] || "");
       if (!body?.file || !body.fields.cardId) {
-        return send(res, 400, { message: "Cần chọn bộ sticker và tải một ảnh lên." });
+        return send(res, 400, { message: "Cần chọn bộ sticker và tải một ảnh lên." }, {}, req);
       }
 
       const mimeType = imageType(body.file.data);
       if (!mimeType) {
-        return send(res, 400, { message: "Chỉ nhận ảnh PNG, JPG hoặc WEBP hợp lệ." });
+        return send(res, 400, { message: "Chỉ nhận ảnh PNG, JPG hoặc WEBP hợp lệ." }, {}, req);
       }
       if (body.file.data.length > 10 * 1024 * 1024) {
-        return send(res, 400, { message: "Ảnh không được vượt quá 10MB." });
+        return send(res, 400, { message: "Ảnh không được vượt quá 10MB." }, {}, req);
       }
 
       const outfit = String(body.fields.outfit || "").trim();
       if (outfit.length > 160) {
-        return send(res, 400, { message: "Trang phục tối đa 160 ký tự." });
+        return send(res, 400, { message: "Trang phục tối đa 160 ký tự." }, {}, req);
       }
 
-      const cards = await readJson("cards.json");
-      const card = cards.find((item) => item.id === body.fields.cardId);
-      if (!card) return send(res, 404, { message: "Không tìm thấy bộ sticker." });
+      const card = await getCard(body.fields.cardId);
+      if (!card) return send(res, 404, { message: "Không tìm thấy bộ sticker." }, {}, req);
 
-      const job = {
-        id: randomUUID(),
+      const job = await createGeneratedJob({
         userId: user.id,
         cardId: card.id,
         title: card.title,
         outfit,
-        status: "processing",
-        image: null,
-        errorMessage: null,
-        createdAt: new Date().toISOString(),
-      };
-
-      await withLock(async () => {
-        const history = await readJson("history.json");
-        history.push(job);
-        await writeJson("history.json", history);
       });
 
-      // Keep Vertex AI outside Node: spawn the Python script as a worker.
       void generateSticker(job, card, outfit, body.file.data, mimeType);
-      return send(res, 202, { jobId: job.id });
+      return send(res, 202, { jobId: job.id }, {}, req);
     }
 
     if (req.method === "GET" && url.pathname === "/api/admin") {
       const user = await currentUser(req);
       if (!user || user.role !== "admin") {
-        return send(res, 403, { message: "Bạn không có quyền quản trị." });
+        return send(res, 403, { message: "Bạn không có quyền quản trị." }, {}, req);
       }
-      const users = await readJson("users.json");
-      const history = await readJson("history.json");
-      const safeUsers = users.map((item) => ({
-        ...publicUser(item),
-        stickerCreations: history.filter(
-          (sticker) => sticker.userId === item.id && sticker.status === "completed"
-        ).length,
-      }));
       return send(res, 200, {
-        users: safeUsers,
-        cards: await readJson("cards.json"),
-      });
+        users: await listUsers(),
+        cards: await listCards(),
+      }, {}, req);
     }
 
     if (req.method === "PUT" && url.pathname.startsWith("/api/admin/cards/")) {
       const user = await currentUser(req);
       if (!user || user.role !== "admin") {
-        return send(res, 403, { message: "Bạn không có quyền quản trị." });
+        return send(res, 403, { message: "Bạn không có quyền quản trị." }, {}, req);
       }
       const cardId = url.pathname.split("/").pop();
       const body = await readBody(req);
-      if (!body) return send(res, 400, { message: "Body JSON không hợp lệ." });
+      if (!body) return send(res, 400, { message: "Body JSON không hợp lệ." }, {}, req);
 
-      const updated = await withLock(async () => {
-        const cards = await readJson("cards.json");
-        const card = cards.find((item) => item.id === cardId);
-        if (!card) return null;
-        card.title = String(body.title || card.title).trim();
-        card.alias = String(body.alias || card.alias).trim();
-        card.description = String(body.description || card.description).trim();
-        card.prompt = String(body.prompt || card.prompt).trim();
-        await writeJson("cards.json", cards);
-        return card;
-      });
-
-      if (!updated) return send(res, 404, { message: "Không tìm thấy bộ sticker." });
-      return send(res, 200, { card: updated });
+      const updated = await updateCard(cardId, body);
+      if (!updated) return send(res, 404, { message: "Không tìm thấy bộ sticker." }, {}, req);
+      return send(res, 200, { card: updated }, {}, req);
     }
 
-    return send(res, 404, { message: "Không tìm thấy API này." });
+    return send(res, 404, { message: "Không tìm thấy API này." }, {}, req);
   } catch (error) {
     console.error(error);
-    return send(res, 500, { message: "Server gặp lỗi. Xem terminal để biết chi tiết." });
+    return send(res, 500, { message: "Server gặp lỗi. Xem terminal để biết chi tiết." }, {}, req);
   }
 }).listen(port, "0.0.0.0", () => {
   console.log(`StickAI API: http://localhost:${port}`);
+  console.log(`Database: Supabase Postgres`);
+  console.log(`APP_ORIGIN: ${process.env.APP_ORIGIN || "(default localhost)"}`);
   console.log(`Python: ${process.env.STICKAI_PYTHON || "(default)"}`);
   console.log(`GCP_PROJECT_ID: ${process.env.GCP_PROJECT_ID || "(missing)"}`);
 });

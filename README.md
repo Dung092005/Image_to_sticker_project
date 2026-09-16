@@ -1,6 +1,6 @@
 # StickAI — bản dễ thuyết trình
 
-StickAI tạo một bộ sticker từ ảnh người dùng. Bản này giữ sản phẩm gốc nhưng dùng đúng kiến thức lớp: **React + Vite + React Router**, **Node `http`**, REST API, JSON file, và script Python gọi Vertex AI.
+StickAI tạo một bộ sticker từ ảnh người dùng. Bản này giữ sản phẩm gốc nhưng dùng đúng kiến thức lớp: **React + Vite + React Router**, **Node `http`**, REST API, **Supabase Postgres** (cùng schema với `Sticker-WEBAPP`), và script Python gọi Vertex AI.
 
 ## Chạy project
 
@@ -35,13 +35,15 @@ Vite proxy `/api` → Node `:3000`, nên React chỉ gọi `fetch("/api/...")`.
 ```text
 React (Vite :5173) --fetch /api--> Vite proxy --> Node server (:3000)
                                                       |
-                                               data/*.json
-                                               (users, cards, history, sessions)
+                                               Supabase Postgres
+                                               (users, sessions, sticker_cards, generated_stickers)
                                                       |
                                                spawn Python
                                                       |
                                                Vertex AI / Gemini
 ```
+
+Cần `DATABASE_URL` trong `.env.local` (connection string pooler Supabase). Session lưu bảng `sessions`; user demo lớp vẫn login email/password.
 
 ### Frontend (`web/src`)
 
@@ -56,7 +58,7 @@ React (Vite :5173) --fetch /api--> Vite proxy --> Node server (:3000)
 Route ladder giống bài Pho Thin: **method + path**.  
 `send()` luôn đặt status + JSON + `res.end()` một lần.
 
-Session lưu trong `data/sessions.json` (restart server không mất login).
+Session lưu trong bảng `sessions` trên Supabase (cookie chỉ giữ UUID).
 
 ## API contract
 
@@ -100,7 +102,7 @@ Nếu thiếu env/credentials: History hiện `error` + message rõ, không treo
 
 **Vite proxy?** `:5173` và `:3000` khác origin. Proxy cho phép gọi `/api` khi dev, tránh CORS.
 
-**Sao JSON không Postgres?** Đủ demo, nhìn được file, giải thích được. Nhiều user ghi đồng thời / dữ liệu lớn mới cần DB.
+**Sao Postgres / Supabase?** Cùng DB với bản Sticker-WEBAPP để chia sẻ user + bộ sticker. Bản lớp vẫn giải thích được REST + session cookie.
 
 **Sao có Python?** SDK Vertex + prompt gốc nằm ở Python. Node = web API; Python = AI worker.
 

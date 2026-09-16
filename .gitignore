@@ -6,3 +6,6 @@ web/dist/
 server/uploads/
 server/generated/
 data/sessions.json
+
+server/gcp-service-account.json
+*.pem
