@@ -1,0 +1,29 @@
+[
+  {
+    "id": "summer",
+    "title": "Summer Sticker Pack",
+    "alias": "Bộ sticker mùa hè của bạn",
+    "topic": "Mùa Hè",
+    "description": "Những biểu cảm rực rỡ cho ngày nắng đẹp và những cuộc trò chuyện đầy năng lượng.",
+    "color": "orange",
+    "prompt": "Summer beach mood stickers of the uploaded person. Keep the exact same face. Bright summer outfits, sunglasses, beach toys when suitable. Short cute Vietnamese captions."
+  },
+  {
+    "id": "cute-emotions",
+    "title": "Cute Emotions",
+    "alias": "Cảm xúc đáng yêu mỗi ngày",
+    "topic": "Cảm Xúc",
+    "description": "Những phản ứng đáng yêu để bạn dùng trong mọi cuộc trò chuyện.",
+    "color": "pink",
+    "prompt": "Based on the uploaded reference photo, use the exact same face and recognizable facial identity from the reference in every sticker. Create one cute sticker sheet with diverse everyday emotions. Use a clean pure white background. Keep the face natural and consistent. Add one short cute Vietnamese dialogue caption to each expression with correct diacritics. Show: happy, laughing, crying, surprised, confused, thinking, shy, proud, excited, worried, angry, sleepy, tired, hungry, in love, thankful. Captions like: “Vui quá!”, “Haha!”, “Huhu...”, “Ôi trời!”, “Ủa gì vậy?”, “Để mình nghĩ...”, “Ngại quá!”, “Tự hào ghê!”, “Yay!”, “Lo quá...”, “Bực mình rồi!”, “Buồn ngủ quá!”, “Mệt xỉu!”, “Đói rồi!”, “Yêu quá!”, “Cảm ơn nha!”."
+  },
+  {
+    "id": "work-study-vibes",
+    "title": "Work & Study Vibes",
+    "alias": "Đi học, đi làm vẫn thật vui",
+    "topic": "Học Tập",
+    "description": "Bộ sticker tiếp thêm năng lượng cho giờ học, công việc và deadline.",
+    "color": "blue",
+    "prompt": "Based on the uploaded reference photo, use the exact same face in every sticker. Create one cute sticker sheet for school and work situations on a clean white background. Add short Vietnamese captions. Show: studying, taking notes, concentrating, presenting, asking a question, drinking coffee, facing a deadline, finishing a task, taking a break, celebrating success. Captions like: “Học bài nào!”, “Đang ghi chép...”, “Tập trung nào!”, “Để mình trình bày!”, “Cho mình hỏi chút!”, “Cà phê không?”, “Sắp deadline rồi!”, “Xong rồi nè!”, “Nghỉ giải lao thôi!”, “Làm tốt lắm!”."
+  }
+]

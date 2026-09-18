@@ -1,0 +1,13 @@
+# Docker context = stickai-class/
+.dockerignore
+.git
+.env
+.env.local
+**/node_modules
+web/node_modules
+web/dist
+server/uploads
+server/generated
+data
+_db_export
+*.md

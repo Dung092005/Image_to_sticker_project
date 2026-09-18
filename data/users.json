@@ -1,0 +1,4 @@
+[
+  { "id": "u-admin", "name": "Admin StickAI", "email": "admin@stickai.local", "password": "admin123", "role": "admin", "createdAt": "2026-09-01T08:00:00.000Z" },
+  { "id": "u-demo", "name": "Minh Demo", "email": "demo@stickai.local", "password": "demo123", "role": "user", "createdAt": "2026-09-02T08:00:00.000Z" }
+]
