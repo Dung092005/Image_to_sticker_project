@@ -81,8 +81,8 @@ def main() -> None:
             build_prompt(args.card_prompt, args.outfit, args.accessories, args.expression, args.extra),
         ],
         config=types.GenerateContentConfig(
-            response_modalities=["IMAGE"],
-            image_config=types.ImageConfig(aspect_ratio="3:4", output_mime_type="image/png"),
+        response_modalities=["IMAGE"],
+            image_config=types.ImageConfig(aspect_ratio="3:4"),
         ),
     )
 

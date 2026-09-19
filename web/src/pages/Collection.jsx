@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import Header from "../components/Header.jsx";
-import { api, apiRaw } from "../api.js";
+import { api, apiRaw, resolveCardImage } from "../api.js";
 
 const APP_HERO_SLIDES = [
   { image: "/hero-slide.png", alt: "Bộ sticker StickAI với nhân vật áo vàng" },
@@ -8,6 +9,7 @@ const APP_HERO_SLIDES = [
 ];
 
 export default function Collection({ user }) {
+  const navigate = useNavigate();
   const [activeHeroSlide, setActiveHeroSlide] = useState(0);
   const [activeProcessStep, setActiveProcessStep] = useState(0);
   const heroTouchStartRef = useRef(null);
@@ -111,8 +113,8 @@ export default function Collection({ user }) {
     try {
       const { response, data } = await apiRaw("/api/generate", { method: "POST", body });
       if (!response.ok) throw new Error(data.message || "Không thể tạo sticker.");
-      setFormMessage("Đã nhận yêu cầu. Bạn có thể theo dõi tiến độ trong Lịch sử.");
-      window.setTimeout(closeCreateModal, 900);
+      setFormMessage("Đã nhận yêu cầu. Đang chuyển sang Lịch sử...");
+      window.setTimeout(() => navigate("/history"), 500);
     } catch (reason) {
       setFormMessage(reason.message || "Không thể tạo sticker.");
     } finally {
@@ -256,7 +258,7 @@ export default function Collection({ user }) {
                 <div className="card-art">
                   {(card.image || card.imageUrl || card.image_url) && (
                     <img
-                      src={card.image || card.imageUrl || card.image_url}
+                      src={resolveCardImage(card.image || card.imageUrl || card.image_url)}
                       alt={card.title}
                     />
                   )}

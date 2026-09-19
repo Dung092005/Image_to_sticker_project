@@ -122,7 +122,6 @@ def generate_image(
             response_modalities=["IMAGE"],
             image_config=types.ImageConfig(
                 aspect_ratio="3:4",
-                output_mime_type="image/png",
             ),
         ),
     )

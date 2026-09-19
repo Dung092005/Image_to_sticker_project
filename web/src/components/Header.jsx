@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, NavLink } from "react-router-dom";
 import { api } from "../api.js";
 
@@ -6,6 +6,19 @@ export default function Header({ user, transparent = false }) {
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
   const [showSearch, setShowSearch] = useState(false);
+  const [hasScrolled, setHasScrolled] = useState(false);
+
+  useEffect(() => {
+    if (!transparent) return undefined;
+
+    function handleScroll() {
+      setHasScrolled(window.scrollY > 8);
+    }
+
+    handleScroll();
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, [transparent]);
 
   async function logout() {
     await api("/api/auth/logout", { method: "POST" });
@@ -13,7 +26,11 @@ export default function Header({ user, transparent = false }) {
   }
 
   return (
-    <header className={`app-header ${transparent ? "transparent" : ""}`}>
+    <header
+      className={`app-header ${transparent ? "transparent" : ""} ${
+        transparent && !hasScrolled ? "at-top" : ""
+      }`}
+    >
       <div className="mobile-header-controls">
         <button
           className="mobile-icon-button"
@@ -57,7 +74,7 @@ export default function Header({ user, transparent = false }) {
       <nav>
         <NavLink to="/app">Bộ sưu tập</NavLink>
         <NavLink to="/history">Lịch sử</NavLink>
-        {user.role === "admin" && <NavLink to="/admin">Admin</NavLink>}
+        {user.role === "admin" && <NavLink to="/admin/users">Admin</NavLink>}
       </nav>
       <div className="account">
         <button
@@ -107,7 +124,7 @@ export default function Header({ user, transparent = false }) {
                 Lịch sử
               </NavLink>
               {user.role === "admin" && (
-                <NavLink to="/admin" onClick={() => setShowSidebar(false)}>
+                  <NavLink to="/admin/users" onClick={() => setShowSidebar(false)}>
                   Admin
                 </NavLink>
               )}

@@ -195,6 +195,26 @@ export async function loginWithPassword(email, password) {
   return mapUser(row);
 }
 
+export async function upsertGoogleUser({ email, name, avatarUrl, isAdmin = false }) {
+  const result = await getPool().query(
+    `
+      INSERT INTO users (email, name, avatar_url, role, updated_at)
+      VALUES ($1, $2, $3, $4, NOW())
+      ON CONFLICT (email) DO UPDATE SET
+        name = EXCLUDED.name,
+        avatar_url = EXCLUDED.avatar_url,
+        role = CASE
+          WHEN users.role = 'admin' OR EXCLUDED.role = 'admin' THEN 'admin'
+          ELSE 'user'
+        END,
+        updated_at = NOW()
+      RETURNING id, email, name, avatar_url, created_at, sticker_creations, role
+    `,
+    [email, name, avatarUrl || null, isAdmin ? "admin" : "user"],
+  );
+  return mapUser(result.rows[0]);
+}
+
 export async function createSession(userId) {
   const sessionId = randomUUID();
   const expiresAt = new Date(Date.now() + SESSION_MAX_AGE_SECONDS * 1000);
@@ -256,7 +276,7 @@ export async function updateCard(id, patch) {
   const result = await getPool().query(
     `
       UPDATE sticker_cards
-      SET title = $2, alias = $3, description = $4, prompt = $5, updated_at = NOW()
+      SET title = $2, alias = $3, description = $4, topic = $5, image = $6, prompt = $7, updated_at = NOW()
       WHERE id = $1
       RETURNING id, title, alias, description, image, topic, year, status, prompt, highlight, created_at, updated_at
     `,
@@ -265,10 +285,44 @@ export async function updateCard(id, patch) {
       String(patch.title || current.title).trim(),
       String(patch.alias || current.alias).trim(),
       String(patch.description || current.description).trim(),
+      String(patch.topic || current.topic).trim(),
+      String(patch.image || current.image).trim(),
       String(patch.prompt || current.prompt).trim(),
     ],
   );
   return result.rows[0] ? mapCard(result.rows[0]) : null;
+}
+
+export async function createCard(patch) {
+  const result = await getPool().query(
+    `
+      INSERT INTO sticker_cards
+        (id, title, alias, description, image, topic, year, status, prompt, highlight)
+      VALUES
+        ($1, $2, $3, $4, $5, $6, $7, $8, $9, TRUE)
+      RETURNING id, title, alias, description, image, topic, year, status, prompt, highlight, created_at, updated_at
+    `,
+    [
+      String(patch.id).trim(),
+      String(patch.title).trim(),
+      String(patch.alias).trim(),
+      String(patch.description).trim(),
+      String(patch.image || "/sticker-hero-illustrated.png").trim(),
+      String(patch.topic || "Dễ Thương").trim(),
+      String(patch.year || new Date().getFullYear()).trim(),
+      String(patch.status || "16 biểu cảm").trim(),
+      String(patch.prompt || "").trim(),
+    ],
+  );
+  return result.rows[0] ? mapCard(result.rows[0]) : null;
+}
+
+export async function deleteCard(id) {
+  const result = await getPool().query(
+    `DELETE FROM sticker_cards WHERE id = $1 RETURNING id`,
+    [id],
+  );
+  return Boolean(result.rows[0]);
 }
 
 export async function listUsers() {
@@ -280,6 +334,31 @@ export async function listUsers() {
     `,
   );
   return result.rows.map(mapUser);
+}
+
+export async function updateUser(id, patch) {
+  const role = patch.role === "admin" ? "admin" : "user";
+  const result = await getPool().query(
+    `
+      UPDATE users
+      SET name = $2,
+          email = $3,
+          role = $4,
+          updated_at = NOW()
+      WHERE id = $1
+      RETURNING id, email, name, avatar_url, created_at, sticker_creations, role
+    `,
+    [id, String(patch.name || "").trim(), String(patch.email || "").trim(), role],
+  );
+  return result.rows[0] ? mapUser(result.rows[0]) : null;
+}
+
+export async function deleteUser(id) {
+  const result = await getPool().query(
+    `DELETE FROM users WHERE id = $1 RETURNING id`,
+    [id],
+  );
+  return Boolean(result.rows[0]);
 }
 
 export async function listHistoryForUser(userId) {

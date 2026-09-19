@@ -28,4 +28,14 @@ export async function apiRaw(path, options = {}) {
   return { response, data };
 }
 
-export { API_BASE, apiUrl };
+export { apiUrl };
+
+const LEGACY_CARD_IMAGES = {
+  "/sticker-hero-illustrated.png": "/hero-slide.png",
+  "/app-beach-banner-desktop.png": "/hero.png",
+  "/stickai-demo-visual.png": "/hero-slide.png",
+};
+
+export function resolveCardImage(image) {
+  return LEGACY_CARD_IMAGES[image] || image || "/hero-slide.png";
+}

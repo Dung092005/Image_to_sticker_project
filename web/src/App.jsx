@@ -4,7 +4,7 @@ import { apiRaw } from "./api.js";
 import Landing from "./pages/Landing.jsx";
 import Collection from "./pages/Collection.jsx";
 import History from "./pages/History.jsx";
-import Admin from "./pages/Admin.jsx";
+import Admin, { AdminStickers, AdminUsers } from "./pages/Admin.jsx";
 
 class ErrorBox extends Component {
   constructor(props) {
@@ -82,6 +82,22 @@ export default function App() {
           element={
             <Protected user={user} checking={checking}>
               <Admin user={user} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/admin/users"
+          element={
+            <Protected user={user} checking={checking}>
+              <AdminUsers user={user} />
+            </Protected>
+          }
+        />
+        <Route
+          path="/admin/stickers"
+          element={
+            <Protected user={user} checking={checking}>
+              <AdminStickers user={user} />
             </Protected>
           }
         />

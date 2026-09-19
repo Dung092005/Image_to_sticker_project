@@ -1,4 +1,5 @@
 import { createServer } from "node:http";
+import { randomBytes } from "node:crypto";
 import { readFile, writeFile, mkdir, unlink } from "node:fs/promises";
 import { existsSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
@@ -7,13 +8,18 @@ import { fileURLToPath } from "node:url";
 import {
   ensureSchema,
   loginWithPassword,
+  upsertGoogleUser,
   createSession,
   getUserBySession,
   deleteSession,
   listCards,
   getCard,
+  createCard,
+  deleteCard,
   updateCard,
   listUsers,
+  updateUser,
+  deleteUser,
   listHistoryForUser,
   getGeneratedForUser,
   createGeneratedJob,
@@ -63,7 +69,7 @@ function corsHeaders(req) {
   const origin = req.headers.origin || "";
   const allowed = allowedOrigins();
   const headers = {
-    "Access-Control-Allow-Methods": "GET,POST,PUT,OPTIONS",
+    "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
     "Access-Control-Allow-Headers": "Content-Type",
     "Access-Control-Allow-Credentials": "true",
     Vary: "Origin",
@@ -91,6 +97,62 @@ function sessionCookie(value, maxAge = SESSION_MAX_AGE_SECONDS) {
   ];
   if (secure) parts.push("Secure");
   return parts.join("; ");
+}
+
+function oauthCookie(name, value, maxAge = 600) {
+  const secure = process.env.COOKIE_SECURE === "true" || process.env.NODE_ENV === "production";
+  return [
+    `${name}=${value}`,
+    "HttpOnly",
+    "SameSite=Lax",
+    "Path=/",
+    `Max-Age=${maxAge}`,
+    secure ? "Secure" : "",
+  ].filter(Boolean).join("; ");
+}
+
+function adminEmails() {
+  return (process.env.ADMIN_EMAILS || "")
+    .split(",")
+    .map((email) => email.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+function appOrigin() {
+  return (process.env.APP_ORIGIN || "http://localhost:5173").split(",")[0].trim().replace(/\/$/, "");
+}
+
+function safeReturnTo(value) {
+  return typeof value === "string" && value.startsWith("/") && !value.startsWith("//")
+    ? value
+    : "/app";
+}
+
+async function exchangeGoogleCode(code) {
+  const response = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      code,
+      client_id: process.env.GOOGLE_CLIENT_ID,
+      client_secret: process.env.GOOGLE_CLIENT_SECRET,
+      redirect_uri: process.env.GOOGLE_REDIRECT_URI || "http://localhost:3000/api/auth/google/callback",
+      grant_type: "authorization_code",
+    }),
+    signal: AbortSignal.timeout(10000),
+  });
+  const payload = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(payload.error_description || payload.error || "Google token exchange failed.");
+  return payload;
+}
+
+async function fetchGoogleUserInfo(accessToken) {
+  const response = await fetch("https://openidconnect.googleapis.com/v1/userinfo", {
+    headers: { Authorization: `Bearer ${accessToken}` },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!response.ok) throw new Error("Không lấy được thông tin tài khoản Google.");
+  return response.json();
 }
 
 function send(res, status, body, extraHeaders = {}, req = null) {
@@ -267,6 +329,83 @@ createServer(async (req, res) => {
         : send(res, 401, { message: "Bạn chưa đăng nhập." }, {}, req);
     }
 
+    if (req.method === "GET" && url.pathname === "/api/auth/google") {
+      const clientId = process.env.GOOGLE_CLIENT_ID?.trim();
+      if (!clientId) {
+        return res.writeHead(302, { Location: `${appOrigin()}/?authError=google_not_configured` }).end();
+      }
+      const state = randomBytes(32).toString("base64url");
+      const returnTo = safeReturnTo(url.searchParams.get("returnTo"));
+      const redirectUri = process.env.GOOGLE_REDIRECT_URI || "http://localhost:3000/api/auth/google/callback";
+      const googleUrl = new URL("https://accounts.google.com/o/oauth2/v2/auth");
+      googleUrl.searchParams.set("client_id", clientId);
+      googleUrl.searchParams.set("redirect_uri", redirectUri);
+      googleUrl.searchParams.set("response_type", "code");
+      googleUrl.searchParams.set("scope", "openid email profile");
+      googleUrl.searchParams.set("state", state);
+      googleUrl.searchParams.set("prompt", "select_account");
+      return res.writeHead(302, {
+        Location: googleUrl.toString(),
+        "Set-Cookie": [
+          oauthCookie("stickai_oauth_state", state),
+          oauthCookie("stickai_oauth_return_to", encodeURIComponent(returnTo)),
+        ],
+      }).end();
+    }
+
+    if (req.method === "GET" && url.pathname === "/api/auth/google/callback") {
+      const cookiesFromRequest = cookies(req);
+      const returnTo = safeReturnTo(
+        decodeURIComponent(cookiesFromRequest.stickai_oauth_return_to || "/app"),
+      );
+      const fail = (code) => res.writeHead(302, {
+        Location: `${appOrigin()}/?authError=${encodeURIComponent(code)}`,
+        "Set-Cookie": [
+          oauthCookie("stickai_oauth_state", "", 0),
+          oauthCookie("stickai_oauth_return_to", "", 0),
+        ],
+      }).end();
+
+      if (url.searchParams.get("error")) return fail("google_denied");
+      if (!process.env.GOOGLE_CLIENT_ID || !process.env.GOOGLE_CLIENT_SECRET) {
+        return fail("google_not_configured");
+      }
+      if (!cookiesFromRequest.stickai_oauth_state ||
+          cookiesFromRequest.stickai_oauth_state !== url.searchParams.get("state")) {
+        return fail("state_mismatch");
+      }
+
+      try {
+        const code = url.searchParams.get("code");
+        if (!code) return fail("missing_code");
+        const token = await exchangeGoogleCode(code);
+        const accessToken = String(token.access_token || "").trim();
+        if (!accessToken) return fail("token_exchange_failed");
+        const googleUser = await fetchGoogleUserInfo(accessToken);
+        const email = String(googleUser.email || "").trim().toLowerCase();
+        const verified = googleUser.email_verified === true || googleUser.email_verified === "true";
+        if (!email || !verified) return fail("missing_email");
+        const user = await upsertGoogleUser({
+          email,
+          name: String(googleUser.name || "").trim() || email.split("@")[0],
+          avatarUrl: String(googleUser.picture || "").trim() || null,
+          isAdmin: adminEmails().includes(email),
+        });
+        const sessionId = await createSession(user.id);
+        return res.writeHead(302, {
+          Location: `${appOrigin()}${returnTo}`,
+          "Set-Cookie": [
+            sessionCookie(sessionId),
+            oauthCookie("stickai_oauth_state", "", 0),
+            oauthCookie("stickai_oauth_return_to", "", 0),
+          ],
+        }).end();
+      } catch (error) {
+        console.error("Google OAuth callback failed:", error);
+        return fail("google_callback_failed");
+      }
+    }
+
     if (req.method === "POST" && url.pathname === "/api/auth/login") {
       const body = await readBody(req);
       if (!body) return send(res, 400, { message: "Body JSON không hợp lệ." }, {}, req);
@@ -372,6 +511,36 @@ createServer(async (req, res) => {
       }, {}, req);
     }
 
+    if (url.pathname.startsWith("/api/admin/users/")) {
+      const admin = await currentUser(req);
+      if (!admin || admin.role !== "admin") {
+        return send(res, 403, { message: "Bạn không có quyền quản trị." }, {}, req);
+      }
+      const userId = url.pathname.split("/").pop();
+      if (!/^\d+$/.test(userId)) {
+        return send(res, 400, { message: "ID user không hợp lệ." }, {}, req);
+      }
+      if (String(admin.id) === userId) {
+        return send(res, 400, { message: "Không thể chỉnh sửa hoặc xoá tài khoản đang đăng nhập." }, {}, req);
+      }
+
+      if (req.method === "PUT") {
+        const body = await readBody(req);
+        if (!body || !String(body.name || "").trim() || !String(body.email || "").trim()) {
+          return send(res, 400, { message: "Tên và email không được để trống." }, {}, req);
+        }
+        const updated = await updateUser(userId, body);
+        if (!updated) return send(res, 404, { message: "Không tìm thấy user." }, {}, req);
+        return send(res, 200, { user: updated }, {}, req);
+      }
+
+      if (req.method === "DELETE") {
+        const deleted = await deleteUser(userId);
+        if (!deleted) return send(res, 404, { message: "Không tìm thấy user." }, {}, req);
+        return send(res, 200, { ok: true }, {}, req);
+      }
+    }
+
     if (req.method === "PUT" && url.pathname.startsWith("/api/admin/cards/")) {
       const user = await currentUser(req);
       if (!user || user.role !== "admin") {
@@ -384,6 +553,30 @@ createServer(async (req, res) => {
       const updated = await updateCard(cardId, body);
       if (!updated) return send(res, 404, { message: "Không tìm thấy bộ sticker." }, {}, req);
       return send(res, 200, { card: updated }, {}, req);
+    }
+
+    if (req.method === "DELETE" && url.pathname.startsWith("/api/admin/cards/")) {
+      const user = await currentUser(req);
+      if (!user || user.role !== "admin") {
+        return send(res, 403, { message: "Bạn không có quyền quản trị." }, {}, req);
+      }
+      const cardId = url.pathname.split("/").pop();
+      const deleted = await deleteCard(cardId);
+      if (!deleted) return send(res, 404, { message: "Không tìm thấy bộ sticker." }, {}, req);
+      return send(res, 200, { ok: true }, {}, req);
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/admin/cards") {
+      const user = await currentUser(req);
+      if (!user || user.role !== "admin") {
+        return send(res, 403, { message: "Bạn không có quyền quản trị." }, {}, req);
+      }
+      const body = await readBody(req);
+      if (!body || !String(body.id || "").trim() || !String(body.title || "").trim()) {
+        return send(res, 400, { message: "Cần nhập ID và tên bộ sticker." }, {}, req);
+      }
+      const created = await createCard(body);
+      return send(res, 201, { card: created }, {}, req);
     }
 
     return send(res, 404, { message: "Không tìm thấy API này." }, {}, req);
